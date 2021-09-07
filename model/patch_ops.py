@@ -8,11 +8,14 @@ from numpy import pi as PI
 class TangentPatch(nn.Module):
     def __init__(self, theta, phi):
         super().__init__()
+
         # Scale grids to [-1, 1]
         x_coord = (theta / PI).flatten(0, 1)
         y_coord = (-phi / PI * 2.0).flatten(0, 1)
+
         # Create flattened grid and unflatten op
-        self.grid = torch.stack([x_coord, y_coord], dim=-1)
+        # self.grid = torch.stack([x_coord, y_coord], dim=-1)
+        self.register_buffer("grid", torch.stack([x_coord, y_coord], dim=-1))
         self.unflatten = nn.Unflatten(-2, theta.shape[:2])
 
     def forward(self, x):
@@ -37,14 +40,14 @@ class Scatter2D(nn.Module):
 
         # Create image coordinates
         y_coord = scatter_mean(y_coord, x_coord, dim_size=x_max)
-        self.x_coord = x_coord.unsqueeze(0)
-        self.y_coord = y_coord.unsqueeze(0)
+        self.register_buffer('x_coord', x_coord.unsqueeze(0))
+        self.register_buffer('y_coord', y_coord.unsqueeze(0))
 
     def forward(self, x):
         x = x.flatten(-3, -2)
         x = scatter_mean(x, self.x_coord.expand_as(x), dim_size=self.x_max)
         x = scatter_mean(x, self.y_coord.expand_as(x), dim_size=self.y_max, dim=-2)
-        return x
+        return x.squeeze(1)
 
 
 def polar_coord_grid(fov, patch_dim, npatch):

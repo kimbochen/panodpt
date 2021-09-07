@@ -2,13 +2,16 @@ from argparse import ArgumentParser
 
 import torch
 import torch.optim as opt
+import torchvision.transforms as T
 from torch import nn
 from torch.utils.data import DataLoader
 from torchmetrics import Metric
 from pytorch_lightning import LightningModule, Trainer, seed_everything
+from numpy import pi as PI
 
 from datasets import MP3dDataset
 from model import ConvDecoder, DepthPredHead, ViTBackbone
+from model.patch_ops import TangentPatch, Scatter2D, polar_coord_grid
 
 
 class PanoDPT(LightningModule):
@@ -16,11 +19,17 @@ class PanoDPT(LightningModule):
         super().__init__()
         self.save_hyperparameters(ignore=['gpu', 'testrun', 'bsnw'])
 
-        self.backbone = ViTBackbone(patch_rc, dropout=True)
+        npatch = patch_rc[0]*patch_rc[1]
+        self.norm = T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+
+        x_grid, y_grid = polar_coord_grid(fov=5.0*PI/180.0, patch_dim=16, npatch=npatch)
+        self.tan_patch = TangentPatch(x_grid, y_grid)
+        self.scatter2d = Scatter2D(x_grid, y_grid, 16*patch_rc[0], 16*patch_rc[1])
+
+        self.backbone = ViTBackbone(npatch=npatch, dropout=False)
         self.decoder = ConvDecoder(patch_rc)
         self.pred_head = DepthPredHead()
 
-        self.upsample = nn.Upsample(size=[384, 1024], mode='bilinear', align_corners=True)
         self.loss_fn = nn.L1Loss()
         self.lr = lr
         self.poly_lr = lambda epoch: (1 - epoch / max_epochs) ** gamma
@@ -32,13 +41,18 @@ class PanoDPT(LightningModule):
         x = self.backbone(x)
         x = self.decoder(x)
         x = self.pred_head(x)
-        x = self.upsample(x.unsqueeze(1)).squeeze(1)
         return x
 
-    def step(self, xb, yb):
-        pred = self.forward(xb)
-        valid_depth = (yb > 0.0)
-        return pred[valid_depth], yb[valid_depth]
+    def step(self, xb, gt):
+        with torch.no_grad():
+            xb_patch = self.tan_patch(self.norm(xb))
+            gt_patch = self.tan_patch(gt.unsqueeze(1))
+            gt = self.scatter2d(gt_patch)
+
+        pred = self.forward(xb_patch)
+        valid_depth = (gt > 0.0)
+
+        return pred[valid_depth], gt[valid_depth]
 
     def training_step(self, batch, batch_idx):
         pred, gt = self.step(*batch)

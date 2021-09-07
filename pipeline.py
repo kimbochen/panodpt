@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader
 from numpy import pi as PI
@@ -21,12 +22,14 @@ def pipeline():
     tan_patch = TangentPatch(x_grid, y_grid)
     scatter2d = Scatter2D(x_grid, y_grid, 400, 1024)
 
-    xb, _ = next(iter(dl))
-    xb = xb.to(DEVICE)
-    patch = tan_patch(xb)
-    patch_img = scatter2d(patch)
-    
-    return patch_img.to('cpu')
+    data = next(iter(dl))
+    xb, gt = map(lambda b: b.to(DEVICE), data)
+    gt = gt.unsqueeze(1)
+
+    with torch.no_grad():
+        xb_patch, gt_patch = map(tan_patch, (xb, gt))
+
+    return xb_patch.shape
 
 
 if __name__ == '__main__':
