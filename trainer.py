@@ -17,8 +17,8 @@ from util import Delta1
 NORM_MEAN = [0.5, 0.5, 0.5]
 NORM_STD = [0.5, 0.5, 0.5]
 
-FOV = 9.0 * PI / 180.0
-PATCH_DIM = 32
+FOV = 5.0 * PI / 180.0
+PATCH_DIM = 16
 IMG_H, IMG_W = 384, 1024
 
 PATCH_RC = (18, 48)
@@ -37,7 +37,7 @@ class PanoDPT(pl.LightningModule):
         self.norm = T.Normalize(mean=NORM_MEAN, std=NORM_STD)
         self.tan_patch = ToTangentPatch(FOV, PATCH_DIM, NPATCH, IMG_H, IMG_W)
         self.model = nn.Sequential(
-            ViTBackbone(npatch=PATCH_RC[0]*PATCH_RC[1], patch_dim=PATCH_DIM),
+            ViTBackbone(npatch=NPATCH, patch_dim=PATCH_DIM),
             ConvDecoder(PATCH_RC),
             DepthPredHead(dmax=DMAX, out_size=[IMG_H, IMG_W])
         )

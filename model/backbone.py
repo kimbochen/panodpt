@@ -3,6 +3,7 @@ import torch
 import torchvision.transforms as T
 from torch import nn
 
+
 GRID_D = 576
 EMBED_D = 768
 
@@ -15,7 +16,7 @@ class ViTBackbone(nn.Module):
             'vit_base_patch16_384', num_classes=0, pretrained=True
         )
         self.patch_embed = PatchEmbed(patch_dim=patch_dim)
-        self.upsample = nn.Upsample(npatch, mode='nearest')
+        self.upsample = nn.Upsample(npatch, mode='linear', align_corners=True)
         self.dropout = dropout
         self.stages = [2, 5, 8, 11]
 
@@ -24,7 +25,6 @@ class ViTBackbone(nn.Module):
 
         # Patch projection
         x = self.patch_embed(x)
-        # x = self.upsample(x.transpose(1, 2)).transpose(1, 2)
         cls_token = self.model.cls_token.expand(x.size(0), -1, -1)
         x = torch.cat([cls_token, x], dim=1)
 
