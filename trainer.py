@@ -19,7 +19,7 @@ NORM_STD = [0.5, 0.5, 0.5]
 
 FOV = 5.0 * PI / 180.0
 PATCH_DIM = 16
-IMG_H, IMG_W = 400, 1024
+IMG_H, IMG_W = 384, 1024
 
 PATCH_RC = (18, 48)
 NPATCH = 864
@@ -34,8 +34,10 @@ class PanoDPT(pl.LightningModule):
     def __init__(self):
         super().__init__()
 
-        self.norm = T.Normalize(mean=NORM_MEAN, std=NORM_STD)
-        self.tan_patch = ToTangentPatch(FOV, PATCH_DIM, NPATCH, IMG_H, IMG_W)
+        self.resize_norm = T.Compose([
+            T.Resize(PATCH_DIM * PATCH_RC[0]),
+            T.Normalize(mean=NORM_MEAN, std=NORM_STD)
+        ])
         self.model = nn.Sequential(
             ViTConv(PATCH_RC, dropout=False),
             ConvDecoder(PATCH_RC),
@@ -51,7 +53,7 @@ class PanoDPT(pl.LightningModule):
         self.val_metric = Delta1()
 
     def step(self, xb, gt):
-        xb = self.norm(xb)
+        xb = self.resize_norm(xb)
         pred = self.model(xb)
         valid_depth = (gt > 0.0)
 
