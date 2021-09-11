@@ -1,130 +1,124 @@
 from argparse import ArgumentParser
+from functools import partial
 
-import torch
+import pytorch_lightning as pl
 import torch.optim as opt
 import torchvision.transforms as T
 from torch import nn
 from torch.utils.data import DataLoader
-from torchmetrics import Metric
-from pytorch_lightning import LightningModule, Trainer, seed_everything
 from numpy import pi as PI
 
-from datasets import MP3dDataset
+from data.dataset import MP3D
+from data.patch_op import ToTangentPatch
 from model import ConvDecoder, DepthPredHead, ViTBackbone
-from model.patch_ops import TangentPatch, Scatter2D, polar_coord_grid
+from util import Delta1
 
 
-class PanoDPT(LightningModule):
-    def __init__(self, patch_rc, max_epochs, lr, gamma, **kwargs):
+NORM_MEAN = [0.5, 0.5, 0.5]
+NORM_STD = [0.5, 0.5, 0.5]
+
+FOV = 5.0 * PI / 180.0
+PATCH_DIM = 16
+IMG_H, IMG_W = 400, 1024
+
+PATCH_RC = (18, 48)
+NPATCH = 864
+DMAX = 10.0
+
+LR = 1e-4
+MAX_EPOCHS = 120
+GAMMA = 0.9
+
+
+class PanoDPT(pl.LightningModule):
+    def __init__(self):
         super().__init__()
-        self.save_hyperparameters(ignore=['gpu', 'testrun', 'bsnw'])
 
-        npatch = patch_rc[0]*patch_rc[1]
-        self.norm = T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-
-        x_grid, y_grid = polar_coord_grid(fov=5.0*PI/180.0, patch_dim=16, npatch=npatch)
-        self.tan_patch = TangentPatch(x_grid, y_grid)
-        self.scatter2d = Scatter2D(x_grid, y_grid, 16*patch_rc[0], 16*patch_rc[1])
-
-        self.backbone = ViTBackbone(npatch=npatch, dropout=False)
-        self.decoder = ConvDecoder(patch_rc)
-        self.pred_head = DepthPredHead()
+        self.norm = T.Normalize(mean=NORM_MEAN, std=NORM_STD)
+        self.tan_patch = ToTangentPatch(FOV, PATCH_DIM, NPATCH, IMG_H, IMG_W)
+        self.model = nn.Sequential(
+            ViTBackbone(npatch=NPATCH, dropout=False),
+            ConvDecoder(PATCH_RC),
+            DepthPredHead(dmax=DMAX, out_size=[IMG_H, IMG_W])
+        )
 
         self.loss_fn = nn.L1Loss()
-        self.lr = lr
-        self.poly_lr = lambda epoch: (1 - epoch / max_epochs) ** gamma
+        self.lr = LR
+        self.poly_coeff = lambda epoch: (1.0 - epoch / MAX_EPOCHS) ** GAMMA
 
+        self.log = partial(self.log, on_step=False, on_epoch=True) 
         self.train_metric = Delta1()
         self.val_metric = Delta1()
 
-    def forward(self, x):
-        x = self.backbone(x)
-        x = self.decoder(x)
-        x = self.pred_head(x)
-        return x
-
     def step(self, xb, gt):
-        with torch.no_grad():
-            xb_patch = self.tan_patch(self.norm(xb))
-            gt_patch = self.tan_patch(gt.unsqueeze(1))
-            gt = self.scatter2d(gt_patch)
+        xb = self.norm(xb)
+        xb_patch, gt = self.tan_patch(xb, gt)
 
-        pred = self.forward(xb_patch)
+        pred = self.model(xb_patch)
         valid_depth = (gt > 0.0)
 
         return pred[valid_depth], gt[valid_depth]
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, idx):
         pred, gt = self.step(*batch)
 
         loss = self.loss_fn(pred, gt)
-        delta1 = self.train_metric(pred, gt)
+        self.log('MAE/Train', loss)
 
-        self.log('MAE/Train', loss, on_step=False, on_epoch=True)
-        self.log('Delta1/Train', delta1, on_step=False, on_epoch=True)
+        delta1 = self.train_metric(pred, gt)
+        self.log('Delta1/Train', delta1)
 
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, idx):
         pred, gt = self.step(*batch)
 
         loss = self.loss_fn(pred, gt)
-        delta1 = self.val_metric(pred, gt)
+        self.log('MAE/Val', loss)
 
-        self.log('MAE/Val', loss, on_step=False, on_epoch=True)
-        self.log('Delta1/Val', delta1, on_step=False, on_epoch=True)
+        delta1 = self.val_metric(pred, gt)
+        self.log('Delta1/Val', delta1)
 
         return loss
 
     def configure_optimizers(self):
         optimizer = opt.Adam(self.parameters(), lr=self.lr)
-        scheduler = opt.lr_scheduler.LambdaLR(optimizer, self.poly_lr)
+        scheduler = opt.lr_scheduler.LambdaLR(optimizer, self.poly_coeff)
         return [optimizer], [scheduler]
 
 
-class Delta1(Metric):
-    def __init__(self):
-        super().__init__()
-        self.add_state('correct', default=torch.tensor(0.0), dist_reduce_fx='sum')
-        self.add_state('n_batch', default=torch.tensor(0.0), dist_reduce_fx='sum')
+def main():
+    pl.seed_everything(3985, workers=True)
 
-    def update(self, pred, gt):
-        pred, gt = pred.detach(), gt.detach()
-        self.correct += (torch.max(pred / gt, gt / pred) < 1.25).float().mean()
-        self.n_batch += 1
-
-    def compute(self):
-        return self.correct / self.n_batch
-
-
-if __name__ == '__main__':
-    parser = ArgumentParser('DPT trainer.')
-
+    parser = ArgumentParser('PanoDPT trainer script')
     parser.add_argument('--gpu', '-g', nargs='+', type=int, default=[0, 1])
-    parser.add_argument('--bsnw', nargs='+', type=int, default=[4, 4])
-    parser.add_argument('--patch_rc', nargs='+', type=int, default=[18, 48])
-    parser.add_argument('--max_epochs', type=int, default=90)
-    parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--gamma', type=float, default=0.9)
     parser.add_argument('--testrun', '-t', action='store_true')
-
+    parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
-    seed_everything(3985)
+    args.precision = 16
+    args.deterministic = True
+    args.max_epochs = MAX_EPOCHS
+    args.log_every_n_steps = MAX_EPOCHS
+    args.gpus = args.gpu
+    args.fast_dev_run = args.testrun
+    args.accelerator = 'ddp' if len(args.gpus) > 1 else None
+    args.logger = pl.loggers.TensorBoardLogger('.', 'logs')
 
-    model = PanoDPT(**vars(args))
+    args.logger.log_hyperparams({
+        'fov': FOV / PI * 180.0, 
+        'out_dim': [D * PATCH_DIM for D in PATCH_RC], 'npatch': NPATCH,
+        'lr': LR, 'epochs': MAX_EPOCHS, 'gamma': GAMMA
+    })
+    trainer = pl.Trainer.from_argparse_args(args)
 
-    def get_dataloader(mode):
-        patch_rc = [16 * d for d in args.patch_rc]
-        ds = MP3dDataset(mode, patch_rc)
-        bs, nw = args.bsnw
-        dl = DataLoader(ds, batch_size=bs, num_workers=nw, pin_memory=True)
-        return dl
-    train_dl, val_dl = get_dataloader('train'), get_dataloader('val')
+    model = PanoDPT()
 
-    trainer = Trainer(
-        gpus=args.gpu, accelerator='ddp', precision=16, deterministic=True,
-        max_epochs=args.max_epochs, fast_dev_run=args.testrun
-    )
+    dl = partial(DataLoader, batch_size=4, num_workers=4, pin_memory=True)
+    ds = partial(MP3D, dmax=DMAX, crop_h=IMG_H)
+    train_dl, val_dl = dl(ds('train')), dl(ds('val'))
 
     trainer.fit(model, train_dl, val_dl)
+
+if __name__ == '__main__':
+    main()

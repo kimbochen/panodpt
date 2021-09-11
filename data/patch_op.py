@@ -5,6 +5,22 @@ from torch_scatter import scatter_mean
 from numpy import pi as PI
 
 
+class ToTangentPatch(nn.Module):
+    def __init__(self, fov, patch_dim, npatch, img_h, img_w):
+        super().__init__()
+        x_grid, y_grid = polar_coord_grid(fov, patch_dim, npatch)
+        self.tan_patch = TangentPatch(x_grid, y_grid)
+        self.scatter2d = Scatter2D(x_grid, y_grid, img_h, img_w)
+
+    def forward(self, xb, gt):
+        with torch.no_grad():
+            xb_patch = self.tan_patch(xb)
+            gt_patch = self.tan_patch(gt.unsqueeze(1))
+            gt = self.scatter2d(gt_patch)
+
+        return xb_patch, gt
+
+
 class TangentPatch(nn.Module):
     def __init__(self, theta, phi):
         super().__init__()
@@ -14,7 +30,6 @@ class TangentPatch(nn.Module):
         y_coord = (-phi / PI * 2.0).flatten(0, 1)
 
         # Create flattened grid and unflatten op
-        # self.grid = torch.stack([x_coord, y_coord], dim=-1)
         self.register_buffer("grid", torch.stack([x_coord, y_coord], dim=-1))
         self.unflatten = nn.Unflatten(-2, theta.shape[:2])
 

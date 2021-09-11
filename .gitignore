@@ -1,4 +1,4 @@
 __pycache__
-*_logs/
+*logs/
 .ipynb_checkpoints/
 tbexp.link
