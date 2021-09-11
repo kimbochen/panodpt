@@ -10,7 +10,7 @@ from numpy import pi as PI
 
 from data.dataset import MP3D
 from data.patch_op import ToTangentPatch
-from model import ConvDecoder, DepthPredHead, ViTBackbone
+from model import ConvDecoder, DepthPredHead, ViTConv
 from util import Delta1
 
 
@@ -37,7 +37,7 @@ class PanoDPT(pl.LightningModule):
         self.norm = T.Normalize(mean=NORM_MEAN, std=NORM_STD)
         self.tan_patch = ToTangentPatch(FOV, PATCH_DIM, NPATCH, IMG_H, IMG_W)
         self.model = nn.Sequential(
-            ViTBackbone(npatch=NPATCH, dropout=False),
+            ViTConv(PATCH_RC, dropout=False),
             ConvDecoder(PATCH_RC),
             DepthPredHead(dmax=DMAX, out_size=[IMG_H, IMG_W])
         )
@@ -52,9 +52,7 @@ class PanoDPT(pl.LightningModule):
 
     def step(self, xb, gt):
         xb = self.norm(xb)
-        xb_patch, gt = self.tan_patch(xb, gt)
-
-        pred = self.model(xb_patch)
+        pred = self.model(xb)
         valid_depth = (gt > 0.0)
 
         return pred[valid_depth], gt[valid_depth]
