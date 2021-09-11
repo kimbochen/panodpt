@@ -17,12 +17,12 @@ from util import Delta1
 NORM_MEAN = [0.5, 0.5, 0.5]
 NORM_STD = [0.5, 0.5, 0.5]
 
-FOV = 5.0 * PI / 180.0
-PATCH_DIM = 16
-IMG_H, IMG_W = 400, 1024
+FOV = 9.0 * PI / 180.0
+PATCH_DIM = 32
+IMG_H, IMG_W = 384, 1024
 
 PATCH_RC = (18, 48)
-NPATCH = 864
+NPATCH = 432
 DMAX = 10.0
 
 LR = 1e-4
@@ -37,7 +37,7 @@ class PanoDPT(pl.LightningModule):
         self.norm = T.Normalize(mean=NORM_MEAN, std=NORM_STD)
         self.tan_patch = ToTangentPatch(FOV, PATCH_DIM, NPATCH, IMG_H, IMG_W)
         self.model = nn.Sequential(
-            ViTBackbone(npatch=NPATCH, dropout=False),
+            ViTBackbone(npatch=PATCH_RC[0]*PATCH_RC[1], patch_dim=PATCH_DIM),
             ConvDecoder(PATCH_RC),
             DepthPredHead(dmax=DMAX, out_size=[IMG_H, IMG_W])
         )
@@ -103,13 +103,14 @@ def main():
     args.gpus = args.gpu
     args.fast_dev_run = args.testrun
     args.accelerator = 'ddp' if len(args.gpus) > 1 else None
-    args.logger = pl.loggers.TensorBoardLogger('.', 'logs')
 
-    args.logger.log_hyperparams({
-        'fov': FOV / PI * 180.0, 
-        'out_dim': [D * PATCH_DIM for D in PATCH_RC], 'npatch': NPATCH,
-        'lr': LR, 'epochs': MAX_EPOCHS, 'gamma': GAMMA
-    })
+    if not args.fast_dev_run:
+        args.logger = pl.loggers.TensorBoardLogger('.', 'logs')
+        args.logger.log_hyperparams({
+            'fov': FOV / PI * 180.0, 'patch_dim': PATCH_DIM, 'npatch': NPATCH,
+            'lr': LR, 'epochs': MAX_EPOCHS, 'gamma': GAMMA
+        })
+
     trainer = pl.Trainer.from_argparse_args(args)
 
     model = PanoDPT()
