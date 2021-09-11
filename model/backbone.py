@@ -3,7 +3,7 @@ import torch
 import torchvision.transforms as T
 from torch import nn
 
-PATCH_D = 24
+GRID_D = 576
 EMBED_D = 768
 
 
@@ -24,12 +24,12 @@ class ViTBackbone(nn.Module):
 
         # Patch projection
         x = self.patch_embed(x)
-        x = self.upsample(x.transpose(1, 2)).transpose(1, 2)
+        # x = self.upsample(x.transpose(1, 2)).transpose(1, 2)
         cls_token = self.model.cls_token.expand(x.size(0), -1, -1)
         x = torch.cat([cls_token, x], dim=1)
 
         # Resize positional embedding
-        token, grid = self.model.pos_embed.split([1, PATCH_D ** 2], 1)
+        token, grid = self.model.pos_embed.split([1, GRID_D], 1)
         grid = self.upsample(grid.transpose(1, 2)).transpose(1, 2)
         pos_embed = torch.cat([token, grid], dim=1)
 

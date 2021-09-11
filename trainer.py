@@ -22,7 +22,7 @@ PATCH_DIM = 32
 IMG_H, IMG_W = 384, 1024
 
 PATCH_RC = (18, 48)
-NPATCH = 432
+NPATCH = 864
 DMAX = 10.0
 
 LR = 1e-4
@@ -105,7 +105,7 @@ def main():
     args.accelerator = 'ddp' if len(args.gpus) > 1 else None
 
     if not args.fast_dev_run:
-        args.logger = pl.loggers.TensorBoardLogger('.', 'logs')
+        args.logger = pl.loggers.TensorBoardLogger('.', 'new_logs')
         args.logger.log_hyperparams({
             'fov': FOV / PI * 180.0, 'patch_dim': PATCH_DIM, 'npatch': NPATCH,
             'lr': LR, 'epochs': MAX_EPOCHS, 'gamma': GAMMA

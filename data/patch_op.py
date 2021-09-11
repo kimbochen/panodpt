@@ -17,7 +17,6 @@ class ToTangentPatch(nn.Module):
             xb_patch = self.tan_patch(xb)
             gt_patch = self.tan_patch(gt.unsqueeze(1))
             gt = self.scatter2d(gt_patch)
-
         return xb_patch, gt
 
 
