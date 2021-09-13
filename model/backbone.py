@@ -1,22 +1,25 @@
 import timm
 import torch
-import torchvision.transforms as T
 from torch import nn
 
 
-GRID_D = 576
+PATCH_D = 24
 EMBED_D = 768
 
 
 class ViTBackbone(nn.Module):
-    def __init__(self, npatch, patch_dim, dropout=False):
+    def __init__(self, patch_dim, npatch, patch_rc, dropout=False):
         super().__init__()
 
         self.model = timm.create_model(
             'vit_base_patch16_384', num_classes=0, pretrained=True
         )
-        self.patch_embed = PatchEmbed(patch_dim=patch_dim)
-        self.upsample = nn.Upsample(npatch, mode='linear', align_corners=True)
+        self.patch_embed = PatchEmbed(patch_dim, npatch, patch_rc[0]*patch_rc[1])
+        self.upsample = nn.Sequential(
+            nn.Unflatten(-1, [PATCH_D, PATCH_D]),
+            nn.Upsample(patch_rc, mode='bilinear', align_corners=True),
+            nn.Flatten(-2)
+        )
         self.dropout = dropout
         self.stages = [2, 5, 8, 11]
 
@@ -29,7 +32,7 @@ class ViTBackbone(nn.Module):
         x = torch.cat([cls_token, x], dim=1)
 
         # Resize positional embedding
-        token, grid = self.model.pos_embed.split([1, GRID_D], 1)
+        token, grid = self.model.pos_embed.split([1, PATCH_D ** 2], 1)
         grid = self.upsample(grid.transpose(1, 2)).transpose(1, 2)
         pos_embed = torch.cat([token, grid], dim=1)
 
@@ -47,15 +50,17 @@ class ViTBackbone(nn.Module):
         return features
 
 class PatchEmbed(nn.Module):
-    def __init__(self, patch_dim):
+    def __init__(self, patch_dim, npatch, patch_rc):
         super().__init__()
         self.project = nn.Linear(3*(patch_dim**2), EMBED_D)
+        self.conv = nn.Conv1d(npatch, patch_rc, kernel_size=1)
 
     def forward(self, x):
         '''x: N x C x P x D x D'''
 
         x = x.transpose(1, 2).flatten(2)  # N x P x CDD
         x = self.project(x)               # N x P x EMBED_D
+        x = self.conv(x)                  # N x patch_rc x EMBED_D
 
         return x
 

@@ -22,7 +22,7 @@ PATCH_DIM = 16
 IMG_H, IMG_W = 384, 1024
 
 PATCH_RC = (18, 48)
-NPATCH = 864
+NPATCH = 1296
 DMAX = 10.0
 
 LR = 1e-4
@@ -37,7 +37,7 @@ class PanoDPT(pl.LightningModule):
         self.norm = T.Normalize(mean=NORM_MEAN, std=NORM_STD)
         self.tan_patch = ToTangentPatch(FOV, PATCH_DIM, NPATCH, IMG_H, IMG_W)
         self.model = nn.Sequential(
-            ViTBackbone(npatch=NPATCH, patch_dim=PATCH_DIM),
+            ViTBackbone(PATCH_DIM, NPATCH, PATCH_RC),
             ConvDecoder(PATCH_RC),
             DepthPredHead(dmax=DMAX, out_size=[IMG_H, IMG_W])
         )
@@ -105,7 +105,7 @@ def main():
     args.accelerator = 'ddp' if len(args.gpus) > 1 else None
 
     if not args.fast_dev_run:
-        args.logger = pl.loggers.TensorBoardLogger('.', 'new_logs')
+        args.logger = pl.loggers.TensorBoardLogger('logs', '30_batch')
         args.logger.log_hyperparams({
             'fov': FOV / PI * 180.0, 'patch_dim': PATCH_DIM, 'npatch': NPATCH,
             'lr': LR, 'epochs': MAX_EPOCHS, 'gamma': GAMMA
