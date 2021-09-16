@@ -1,6 +1,5 @@
 import timm
 import torch
-import torchvision.transforms as T
 from torch import nn
 
 PATCH_D = 24

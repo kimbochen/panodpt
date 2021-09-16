@@ -38,11 +38,9 @@ class PanoDPT(pl.LightningModule):
             T.Resize(PATCH_DIM * PATCH_RC[0]),
             T.Normalize(mean=NORM_MEAN, std=NORM_STD)
         ])
-        self.model = nn.Sequential(
-            ViTConv(PATCH_RC, dropout=False),
-            ConvDecoder(PATCH_RC),
-            DepthPredHead(dmax=DMAX, out_size=[IMG_H, IMG_W])
-        )
+        self.backbone = ViTConv(PATCH_RC, dropout=False)
+        self.decoder = ConvDecoder(PATCH_RC)
+        self.pred_head = DepthPredHead(dmax=DMAX, out_size=[IMG_H, IMG_W])
 
         self.loss_fn = nn.L1Loss()
         self.lr = LR
@@ -52,11 +50,18 @@ class PanoDPT(pl.LightningModule):
         self.train_metric = Delta1()
         self.val_metric = Delta1()
 
-    def step(self, xb, gt):
+    def forward(self, xb):
         xb = self.resize_norm(xb)
-        pred = self.model(xb)
-        valid_depth = (gt > 0.0)
 
+        feats = self.backbone(xb)
+        feats = self.decoder(feats)
+        pred = self.pred_head(feats)
+
+        return pred
+
+    def step(self, xb, gt):
+        pred = self.forward(xb)
+        valid_depth = (gt > 0.0)
         return pred[valid_depth], gt[valid_depth]
 
     def training_step(self, batch, idx):
@@ -103,13 +108,14 @@ def main():
     args.gpus = args.gpu
     args.fast_dev_run = args.testrun
     args.accelerator = 'ddp' if len(args.gpus) > 1 else None
-    args.logger = pl.loggers.TensorBoardLogger('.', 'logs')
 
-    args.logger.log_hyperparams({
-        'fov': FOV / PI * 180.0, 
-        'out_dim': [D * PATCH_DIM for D in PATCH_RC], 'npatch': NPATCH,
-        'lr': LR, 'epochs': MAX_EPOCHS, 'gamma': GAMMA
-    })
+    if not args.fast_dev_run:
+        args.logger = pl.loggers.TensorBoardLogger('logs', '30_batch', 'conv')
+        args.logger.log_hyperparams({
+            'fov': FOV / PI * 180.0, 'patch_dim': PATCH_DIM, 'npatch': NPATCH,
+            'lr': LR, 'epochs': MAX_EPOCHS, 'gamma': GAMMA
+        })
+
     trainer = pl.Trainer.from_argparse_args(args)
 
     model = PanoDPT()
